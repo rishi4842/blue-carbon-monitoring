@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -208,30 +207,31 @@ elif page == "Clustering and map":
     visible = cluster_data[cluster_data["Cluster"].isin(selected_clusters)]
     st.subheader("Interactive spatial view")
     st.caption(
-        "Longitude and latitude are plotted as coordinates, not on a basemap. "
-        "The chart supports zooming and panning."
+        "Use the cluster filter to focus the map. The map uses geographic "
+        "coordinates and supports zooming and panning."
     )
-    spatial_chart = (
-        alt.Chart(visible)
-        .mark_circle(size=85, opacity=0.8)
-        .encode(
-            x=alt.X("Longitude:Q", scale=alt.Scale(zero=False), title="Longitude"),
-            y=alt.Y("Latitude:Q", scale=alt.Scale(zero=False), title="Latitude"),
-            color=alt.Color("Cluster:N", title="Cluster"),
-            tooltip=[
-                alt.Tooltip("Cluster:N"),
-                alt.Tooltip("Latitude:Q", format=".5f"),
-                alt.Tooltip("Longitude:Q", format=".5f"),
-                *[
-                    alt.Tooltip(f"{feature}:Q", format=".3f")
-                    for feature in RAW_FEATURES
-                ],
-            ],
-        )
-        .properties(height=500)
-        .interactive()
+    cluster_colors = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"]
+    color_by_cluster = {
+        cluster: cluster_colors[index % len(cluster_colors)]
+        for index, cluster in enumerate(available_clusters)
+    }
+    map_color = (
+        color_by_cluster[selected_clusters[0]]
+        if len(selected_clusters) == 1
+        else "#008c95"
     )
-    st.altair_chart(spatial_chart, use_container_width=True)
+    st.map(
+        visible[["Latitude", "Longitude"]],
+        latitude="Latitude",
+        longitude="Longitude",
+        color=map_color,
+        size=12,
+        height=500,
+    )
+    st.caption(
+        f"Showing {len(visible):,} of {len(cluster_data):,} pixels. "
+        "For cluster-specific colors and full dataset context, see the static map below."
+    )
 
     left, right = st.columns(2)
     scatter_path = FIGURES_DIR / "cluster_scatter.png"
