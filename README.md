@@ -126,4 +126,3 @@ the results.
 - **Data analysis:** pandas, scikit-learn
 - **Visualization and app:** Plotly, Streamlit, Matplotlib, Seaborn
 
-Developed for SIH26024.
