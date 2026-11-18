@@ -69,17 +69,42 @@ variance = data["variance"]
 silhouette = data["silhouette"]
 loadings = data["loadings"]
 
-if not (
-    len(observations) == len(pca_data) == len(cluster_data)
-    and observations[["Latitude", "Longitude"]].equals(
-        pca_data[["Latitude", "Longitude"]]
-    )
-    and observations[["Latitude", "Longitude"]].equals(
-        cluster_data[["Latitude", "Longitude"]]
-    )
-):
-    st.error("Pipeline CSVs do not refer to the same pixels in the same row order.")
+coordinate_columns = ["Latitude", "Longitude"]
+expected_coordinates = observations[coordinate_columns]
+expected_index = pd.MultiIndex.from_frame(expected_coordinates.round(6))
+if expected_index.has_duplicates:
+    st.error("Observation coordinates are not unique at six-decimal precision.")
     st.stop()
+
+for name, frame in [("PCA", pca_data), ("cluster", cluster_data)]:
+    if len(frame) != len(observations):
+        st.error(
+            f"{name} data contains {len(frame)} rows, but observations contain "
+            f"{len(observations)}."
+        )
+        st.stop()
+
+    coordinate_index = pd.MultiIndex.from_frame(
+        frame[coordinate_columns].round(6)
+    )
+    if coordinate_index.has_duplicates:
+        st.error(f"{name} coordinates are not unique at six-decimal precision.")
+        st.stop()
+    if set(coordinate_index) != set(expected_index):
+        st.error(
+            f"{name} data does not contain the same geographic pixels as "
+            "the observation dataset."
+        )
+        st.stop()
+
+    # Match rows by location rather than relying on CSV row order or exact float equality.
+    frame.index = coordinate_index
+    frame = frame.reindex(expected_index).reset_index(drop=True)
+    frame[coordinate_columns] = expected_coordinates.to_numpy()
+    if name == "PCA":
+        pca_data = frame
+    else:
+        cluster_data = frame
 
 cluster_data["Cluster"] = cluster_data["Cluster"].astype(str)
 cluster_sizes = cluster_data["Cluster"].value_counts().sort_index()
