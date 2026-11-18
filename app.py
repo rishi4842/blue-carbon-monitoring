@@ -1,14 +1,14 @@
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 
 ROOT = Path(__file__).resolve().parent
 PROCESSED_DIR = ROOT / "data" / "processed"
 REPORTS_DIR = ROOT / "reports"
-FIGURES_DIR = REPORTS_DIR / "figures"
 RAW_FEATURES = ["AGC", "SOCD", "NDVI", "GreenTrend", "MTemp", "TotPrcp"]
 PCA_FEATURES = ["PC1", "PC2", "PC3", "PC4", "PC5"]
 COORDINATES = ["Latitude", "Longitude"]
@@ -39,6 +39,12 @@ st.markdown(
         border-radius: 14px;
         padding: 18px 20px;
         min-height: 112px;
+        transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease;
+    }
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-4px);
+        border-color: rgba(56, 189, 248, .7);
+        box-shadow: 0 12px 28px rgba(14, 165, 233, .16);
     }
     [data-testid="stMetricLabel"] p {
         color: #a9c5d5;
@@ -123,7 +129,8 @@ def load_data():
 
 
 try:
-    data = load_data()
+    with st.spinner("Preparing the spatial intelligence workspace..."):
+        data = load_data()
 except (FileNotFoundError, ValueError) as error:
     st.error(f"Dashboard data could not be loaded: {error}")
     st.info(
@@ -139,6 +146,10 @@ profiles = data["profiles"]
 variance = data["variance"]
 silhouette = data["silhouette"]
 loadings = data["loadings"]
+
+if not st.session_state.get("welcome_toast_shown", False):
+    st.toast("Blue Carbon Intelligence workspace ready", icon="🌊")
+    st.session_state["welcome_toast_shown"] = True
 
 expected_coordinates = observations[COORDINATES]
 expected_index = pd.MultiIndex.from_frame(expected_coordinates.round(6))
@@ -189,12 +200,15 @@ four_pc_variance = float(
 )
 
 
-def show_figure(filename: str, caption: Optional[str] = None) -> None:
-    path = FIGURES_DIR / filename
-    if path.is_file():
-        st.image(str(path), width="stretch", caption=caption)
-    else:
-        st.warning(f"Figure not available: {filename}")
+def style_plotly(fig: go.Figure) -> go.Figure:
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=12, r=12, t=55, b=12),
+        hoverlabel=dict(bgcolor="#102536", font_color="#E8F2F8"),
+    )
+    return fig
 
 
 with st.sidebar:
@@ -289,7 +303,22 @@ elif page == "Data Intelligence":
         ["Correlations", "Distributions", "Feature statistics"]
     )
     with tab_correlations:
-        show_figure("correlation_heatmap.png")
+        correlation_matrix = observations[variable_features].corr()
+        correlation_chart = px.imshow(
+            correlation_matrix,
+            text_auto=".2f",
+            aspect="auto",
+            color_continuous_scale="RdBu_r",
+            zmin=-1,
+            zmax=1,
+            title="Interactive feature correlations",
+            labels=dict(color="Correlation"),
+        )
+        st.plotly_chart(
+            style_plotly(correlation_chart),
+            use_container_width=True,
+            config={"displaylogo": False, "scrollZoom": True},
+        )
         if constant_features:
             st.info(
                 "Correlation is undefined for constant feature(s): "
@@ -297,7 +326,26 @@ elif page == "Data Intelligence":
                 + ". These features do not enter PCA."
             )
     with tab_distributions:
-        show_figure("feature_distributions.png")
+        selected_feature = st.selectbox(
+            "Feature to inspect",
+            variable_features,
+            key="eda_feature",
+        )
+        distribution_chart = px.histogram(
+            observations,
+            x=selected_feature,
+            nbins=40,
+            marginal="box",
+            title=f"{selected_feature} distribution",
+            labels={selected_feature: selected_feature, "count": "Pixel count"},
+            color_discrete_sequence=["#38BDF8"],
+        )
+        distribution_chart.update_layout(bargap=0.08)
+        st.plotly_chart(
+            style_plotly(distribution_chart),
+            use_container_width=True,
+            config={"displaylogo": False, "scrollZoom": True},
+        )
     with tab_records:
         st.dataframe(
             observations[RAW_FEATURES].describe().T,
@@ -320,8 +368,47 @@ elif page == "Dimensionality Reduction":
 
     left, right = st.columns([1.15, 1])
     with left:
-        st.subheader("Explained variance")
-        show_figure("pca_variance.png")
+        st.subheader("Interactive explained variance")
+        scree_chart = px.bar(
+            variance,
+            x="Component",
+            y="ExplainedVariancePercent",
+            text_auto=".1f",
+            labels={
+                "ExplainedVariancePercent": "Individual variance (%)",
+                "Component": "Principal component",
+            },
+            title="Variance explained by component",
+            color_discrete_sequence=["#38BDF8"],
+        )
+        scree_chart.add_trace(
+            go.Scatter(
+                x=variance["Component"],
+                y=variance["CumulativeVariancePercent"],
+                mode="lines+markers",
+                name="Cumulative variance",
+                yaxis="y2",
+                line=dict(color="#F59E0B", width=3),
+                marker=dict(size=8),
+                hovertemplate="%{x}<br>Cumulative: %{y:.2f}%<extra></extra>",
+            )
+        )
+        scree_chart.update_layout(
+            yaxis=dict(title="Individual variance (%)", rangemode="tozero"),
+            yaxis2=dict(
+                title="Cumulative variance (%)",
+                overlaying="y",
+                side="right",
+                range=[0, 105],
+                showgrid=False,
+            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        )
+        st.plotly_chart(
+            style_plotly(scree_chart),
+            use_container_width=True,
+            config={"displaylogo": False, "scrollZoom": True},
+        )
     with right:
         st.subheader("Component summary")
         st.dataframe(variance, width="stretch", hide_index=True)
@@ -372,24 +459,80 @@ elif page == "Geospatial Clustering":
             default=available_clusters,
         )
         visible = cluster_data[cluster_data["Cluster"].isin(selected_clusters)]
-        if not visible.empty:
-            st.map(
-                visible[COORDINATES],
-                latitude="Latitude",
-                longitude="Longitude",
-                height=480,
-            )
-        else:
+        if visible.empty:
             st.info("Select one or more clusters to display their pixels.")
-        st.caption(
-            f"Showing {len(visible):,} of {len(cluster_data):,} pixels. "
-            "The cluster-colored static map is shown below."
-        )
-        show_figure("spatial_cluster_map.png")
+        else:
+            map_data = observations.loc[
+                visible.index, COORDINATES + variable_features
+            ].copy()
+            map_data["Cluster"] = visible["Cluster"].to_numpy()
+            map_chart = px.scatter_geo(
+                map_data,
+                lat="Latitude",
+                lon="Longitude",
+                color="Cluster",
+                hover_name="Cluster",
+                hover_data={
+                    "Latitude": ":.5f",
+                    "Longitude": ":.5f",
+                    **{feature: ":.3f" for feature in variable_features},
+                },
+                projection="mercator",
+                title="Mangrove pixels by exploratory cluster",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+            map_chart.update_geos(
+                fitbounds="locations",
+                showland=True,
+                landcolor="#173044",
+                showocean=True,
+                oceancolor="#071521",
+                showcountries=True,
+                countrycolor="#456477",
+                showcoastlines=True,
+                coastlinecolor="#8BB7CA",
+            )
+            map_chart.update_traces(
+                marker=dict(size=10, opacity=0.82, line=dict(width=0.7, color="#E8F2F8"))
+            )
+            st.plotly_chart(
+                style_plotly(map_chart),
+                use_container_width=True,
+                config={"displaylogo": False, "scrollZoom": True},
+            )
+        st.caption(f"Showing {len(visible):,} of {len(cluster_data):,} pixels.")
     with tab_profiles:
         st.subheader("Mean feature values by cluster")
         st.dataframe(profiles, width="stretch")
         st.subheader("Silhouette scores by candidate K")
-        st.line_chart(silhouette.set_index("K")["SilhouetteScore"])
+        silhouette_chart = px.line(
+            silhouette,
+            x="K",
+            y="SilhouetteScore",
+            markers=True,
+            title="Silhouette score across tested cluster counts",
+            labels={"K": "Number of clusters (K)", "SilhouetteScore": "Score"},
+        )
+        st.plotly_chart(
+            style_plotly(silhouette_chart),
+            use_container_width=True,
+            config={"displaylogo": False},
+        )
         st.subheader("Clusters in principal-component space")
-        show_figure("cluster_scatter.png")
+        pc_chart = px.scatter(
+            cluster_data,
+            x="PC1",
+            y="PC2",
+            color="Cluster",
+            hover_data=COORDINATES + ["PC3", "PC4"],
+            title="Cluster assignments in principal-component space",
+            color_discrete_sequence=px.colors.qualitative.Set2,
+        )
+        pc_chart.update_traces(
+            marker=dict(size=9, opacity=0.82, line=dict(width=0.5, color="#E8F2F8"))
+        )
+        st.plotly_chart(
+            style_plotly(pc_chart),
+            use_container_width=True,
+            config={"displaylogo": False, "scrollZoom": True},
+        )
