@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.streamlit/secrets.toml
+
+# Original archives and extracted source rasters are not needed by the dashboard.
+data/raw/
+data/extracted/
